@@ -1,6 +1,6 @@
 # Roadmap
 
-> **In progress: early M1 native editor.** The browser shell supports native table creation, record editing, transactional history, sequential undo and browser autosave/restore, plus read-only SQLite browsing. Worker/OPFS storage, full field design and platform packaging remain unfinished. Milestones are ordered by dependency, not by date. The release goal for each milestone from M1 on is a tagged prerelease built for every platform; that workflow is not implemented yet. Command ids refer to [COMMANDS-PLAN.md](COMMANDS-PLAN.md).
+> **In progress: M1 native editor, with the first M2 tools.** The browser shell supports native table creation and redesign, five field types, record editing, transactional history, sequential undo, browser autosave/restore, CSV/JSON import and export, a read-only SQL view and keyboard customization, plus read-only SQLite browsing. Worker/OPFS storage, validation/index/lookup design, query design and native platform packaging remain unfinished. Milestones are ordered by dependency, not by date. The release goal for each milestone from M1 on is a tagged prerelease built for every platform; tagged web prereleases are implemented, Android/iOS/desktop builds are not. Command ids refer to [COMMANDS-PLAN.md](COMMANDS-PLAN.md).
 
 ## M0 — Planning (this repository)
 
@@ -12,17 +12,21 @@
   - [x] Synthetic SQLite seed corpus: intact relational data, damaged header, damaged secondary index and truncation; provenance, logical ground truth and read-only validation tests. See [tests/corpus/README.md](../tests/corpus/README.md).
   - [ ] Add Access, xBase, Paradox and other format samples, WAL/journal damage and recovery-score assertions as their readers arrive.
 - [ ] Confirm the license of every on-device model candidate in AI-PLAN.md and of the optional DuckDB module.
+  - [x] Declared licenses of the runtimes and optional module confirmed from their package registry entries (DuckDB-WASM MIT, ONNX Runtime Web MIT, Transformers.js Apache-2.0); see [LEGAL.md](LEGAL.md#license-verification).
+  - [ ] AI-PLAN.md names no specific model weights yet; each chosen model's license must be checked when it is selected.
 
 ## M1 — Shell, engine and tables
 
 - Project scaffold: TypeScript, Vite, vitest, Capacitor 8 (Android, iOS), Electron, PWA manifest and service worker; CI and release workflows from the sister apps.
   - [x] TypeScript/Vite browser entry, vitest, lockfile and web validation CI (`npm ci`, tests, type check and production build).
   - [x] Installable web manifest/icons, production-only service worker with integrity-checked editor/SQLite precache, offline readiness/repair, install prompt and update status; updates wait for all clients to close and preserve IndexedDB user data. Relative deployment paths and offline editing are browser-verified.
-  - [ ] Capacitor, Electron and multiplatform release workflows. Public web hosting/deployment is not configured.
+  - [x] Tag-triggered release workflow: tests, production build, version/tag check and a GitHub prerelease with the zipped offline web build and SHA-256 checksum.
+  - [ ] Capacitor and Electron projects and their release jobs. Public web hosting/deployment is not configured.
 - Suite shell: command registry, ribbon, Quick Access Bar with **Add All Choices** (`view.qatAddAll`), Customize Ribbon and Keyboard, command search, Backstage, preferences, settings import/export, portable mode.
   - [x] Registry for every planned command, search, ribbon groups, Quick Access pin/unpin/clear, standard and extra choices with Save/Print first, and browser-persisted pins/menu selection. Execution requires a real handler; unimplemented commands stay unavailable.
   - [x] Modern Office-style ribbon tabs with keyboard navigation and Word-style File/Backstage navigation; database actions stay unavailable until implemented.
-  - [ ] Custom ribbon/key bindings, working database actions in Backstage, broader preferences, import/export and portable mode; integrate suite shell conventions as features arrive.
+  - [x] Keyboard shortcuts from the catalog run available commands, with text-field protection; Customize Keyboard assigns, moves, removes and resets shortcuts; Export/Import Settings writes and validates a portable settings file; File ▸ Options links them. Backstage New/Open/Save/Export/Close actions work.
+  - [ ] Custom ribbon tabs, broader preferences and portable mode; integrate suite shell conventions as features arrive.
 - **Classic menu bar** with the Access 2003 layout (default) and View ▸ Menus.
   - [x] Render all 15 planned layouts and nested menus with a layout selector; default to Access 2003 style.
   - [x] Menus/Menu Layout commands reveal the chooser; all 15 layouts support arrow/Home/End navigation, nested submenus, type-ahead, native Enter/Space activation, Escape/Tab and outside-focus/pointer dismissal. Disabled actions are skipped and command-directed focus is preserved.
@@ -33,7 +37,8 @@
   - [x] `2-preview` selective-restore events, no automatic record-id reuse, stale-preview/journal-consistency checks and transactional upgrade of supported `1-preview` files on first selective restore.
   - [x] IndexedDB recovery copies for each editable native database, atomic metadata/byte writes, reload restoration with undo history, serialized/coalesced autosaves, stale-tab revision checks and visible storage-error retry.
   - [x] Versioned IndexedDB snapshots: labeled pinned manual versions, opt-in before-change captures, per-document automatic retention, atomic pruning, checksum verification, copy restore/download and shared command bindings.
-  - [ ] Worker/OPFS and platform storage, finalized object catalog, transaction grouping across multiple operations, scheduled snapshots/age retention and encryption.
+  - [x] `3-preview` catalog: table redesign (`alterTable`) and bulk import (`importTable`) each commit as one journal event that undoes completely, including removed field values.
+  - [ ] Worker/OPFS and platform storage, finalized object catalog, general transaction grouping for arbitrary multi-step operations, scheduled snapshots/age retention and encryption.
 - Navigation pane and Database window; Table Datasheet and Design views with every field type, properties, validation, indexes, lookups; record commands, sort and filter (selection, form, advanced), find and replace, totals row.
   - [x] Table navigation and read-only datasheet pages, preserving integer precision and displaying nulls/blobs safely.
   - [x] Basic table creation (Text, Whole number, Decimal number, non-null fields, automatic integer primary key), record insert/update/delete, null controls and sequential undo; pending-edit and draft guards.
@@ -41,7 +46,9 @@
   - [x] Multi-column sorting with up to five ordered priorities, reordering/removal, and up to eight typed filter conditions combined with All/Any; literal Find intersects the complete group. Shared advanced command bindings, whole-group toggle/clear, stable paging and draft guards work on native and read-only files.
   - [x] Named browser view presets preserve applied sort/filter/Find/toggle settings, with explicit loading, replace/rename/remove, schema compatibility checks, cross-tab revision protection, visible storage errors and read-only/offline reuse. Presets remain separate from native files.
   - [x] Read-only totals row: full filtered-result record count and per-column Count/Sum/Average/Minimum/Maximum, exact integer handling, explicit overflow/type errors, paging cache and refresh after edits/undo/view changes. Works with native and read-only files.
-  - [ ] Existing-table schema design, remaining field types, validation/index/lookup designers, virtualized large-data grids, custom sort lists, nested condition groups, saved query objects, standard deviation/variance, saved totals settings and the remaining record commands.
+  - [x] Design view for existing native tables: add, remove, rename and reorder fields and change Required, journaled with exact undo; Yes/No and Date field types with CHECK constraints and a date filter kind.
+  - [x] Sample standard deviation and variance totals (two-pass).
+  - [ ] Remaining field types (currency, date/time, long text, attachment, calculated…), field type conversion, validation/index/lookup designers, virtualized large-data grids, custom sort lists, nested condition groups, saved query objects, saved totals settings and the remaining record commands.
 - Undo Delete, Record History, Show Table as of (the journal's first uses).
   - [x] Global Undo restores deletions and previous row values; the latest 100 journal entries are visible in Change history.
   - [x] Per-record before/after history with older-page loading, deleted-record id lookup and selective restore as a new undoable change; history and restore survive download/reload.
@@ -51,9 +58,17 @@
 ## M2 — Queries and relationships
 
 - Relationships window, referential integrity, ER diagram.
+  - [x] Relationships view listing declared SQLite foreign keys with actions and a simple diagram (read-only).
+  - [ ] Defining relationships on native tables, referential integrity enforcement and an editable diagram.
 - Query Design grid and SQL view round-trip; every query type; parameters, totals, crosstab; Jet SQL on SQLite.
+  - [ ] Query Design grid, saved query objects, action/crosstab/parameter queries and Jet SQL.
 - SQL editor with dialects, explain plan, transactions, history; Translate SQL.
+  - [x] Read-only SQL view: single SELECT/WITH/VALUES statements checked lexically before preparation, exact integers, 1,000-row results, explain plan, formatter, session history and CSV download of results.
+  - [ ] Journaled write statements, transactions, cancellation (needs a worker), dialects and Translate SQL.
 - Import and export: CSV/text with specs, spreadsheets, JSON, XML, HTML, SQLite, SQL scripts; Open in Anne's Grid.
+  - [x] Import CSV/tab/semicolon/bar-delimited text and JSON arrays as a new native table with type inference, editable field names/types and a single undoable journal event.
+  - [x] Export the current table view as CSV, tab-delimited text, JSON, HTML or XML, the database as a SQLite copy, and the whole database as a SQL script.
+  - [ ] Saved import/export specifications, appending to existing tables, spreadsheets, XML/HTML import, SQL script import and Open in Anne's Grid.
 
 ## M3 — Forms, reports and Access files
 

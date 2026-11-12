@@ -1,7 +1,9 @@
 # Current architecture
 
-Anne's Base currently contains a browser shell, an in-memory native table editor
-with a transaction journal and undo, a read-only SQLite viewer and synthetic fixtures.
+Anne's Base currently contains a browser shell with keyboard customization, an
+in-memory native table editor with table design, import and a transaction journal
+with undo, a read-only SQL view, exports, a read-only SQLite viewer and synthetic
+fixtures.
 [ARCHITECTURE-PLAN.md](ARCHITECTURE-PLAN.md) describes the intended full product.
 
 ## Web scaffold
@@ -70,8 +72,27 @@ working for the session and saving failures are reported.
 Add All Choices puts Save and Print first, sorts the remaining choices by label,
 and appends other existing pins in their prior order. Any catalog command may be
 pinned from search, including planned commands; pinning does not enable execution.
-Separators, rearranging pins, settings import/export, per-database settings and
-cross-app preference-format compatibility are not implemented yet.
+Separators, rearranging pins, per-database settings and cross-app
+preference-format compatibility are not implemented yet.
+
+Preferences may also hold `keys`, a map from canonical shortcut text to a command
+id (assign) or `null` (remove a catalog default); it is omitted when empty.
+`exportSettings`/`importSettings` wrap preferences in a versioned
+`annes-base-settings` JSON file; import runs the same normalization, so unknown
+commands, invalid shortcuts and layouts are dropped rather than trusted.
+
+## Keyboard
+
+`src/keyboard.ts` canonicalizes shortcut text (`Ctrl+Alt+Shift+Key`; Meta/Cmd is
+treated as Ctrl) and keyboard events (physical letter, digit and punctuation keys,
+so Ctrl+Shift+; is stable; a typed plus is `Ctrl++`). Effective bindings are the
+catalog shortcuts, first command winning on a shared key, with overrides applied.
+One document listener per shell dispatches a key only when its command is
+available, and calls `preventDefault` only then. In inputs, text areas, selects
+and editable content, unmodified keys, Esc and native editing chords (Ctrl+A/C/V/X/Z/Y,
+word navigation) are never captured. `src/ui/keyboardSettings.ts` provides the
+Customize Keyboard panel; its capture box stops propagation so recording a key
+never runs a command.
 
 ## SQLite and files
 
@@ -114,7 +135,9 @@ explicitly described as a request, not a confirmed save.
 ## Native editing and journal
 
 `src/engine/journal.ts` accepts only managed native tables: an automatic integer
-id and 1–32 Text/Integer/Real fields. Metadata (`qb_objects.fields_json`) must
+id and 1–32 Text, Integer, Real, Boolean (Yes/No) or Date fields. Boolean columns
+carry `CHECK (x IN (0, 1))` and Date columns `CHECK (x IS date(x))`, so only real
+`YYYY-MM-DD` dates are stored. Metadata (`qb_objects.fields_json`) must
 reconstruct the exact table SQL before writes are allowed. Internal schemas are
 checked on open; any trigger disables all native editing. Ordinary SQLite and
 unsupported native schemas stay read-only. Required means SQL NOT NULL; empty
@@ -133,8 +156,60 @@ redo is not offered. The journal is part of the downloaded database.
 
 `src/ui/editors.ts` provides a field-list form and record forms with explicit null
 controls. Edits are committed on Save record, not per keystroke. Selection enables
-Edit/Delete; change history shows the latest 100 entries. Existing-table schema
-changes, foreign-key design, arbitrary SQLite writes and as-of views remain planned.
+Edit/Delete; change history shows the latest 100 entries. Foreign-key design,
+arbitrary SQLite writes and as-of views remain planned.
+
+### Table redesign and import (`3-preview`)
+
+`alterTable(table, changes)` takes the complete new field list, each entry naming
+the existing field whose values it keeps (or `null` for a new, empty field). Kept
+fields may be renamed, reordered or change Required, but not type. In one IMMEDIATE
+transaction the journal stores the old field list plus every non-null value of each
+removed field, the table is renamed to the reserved `qb_rebuild`, recreated from
+canonical SQL, filled with `INSERT … SELECT`, and the temporary table dropped; the
+catalog row is updated and a single `alterTable` event written. A NOT NULL failure
+rolls everything back with an explanation. Undo verifies the current design and
+that added fields are still empty, rebuilds to the previous design with removed
+fields relaxed, writes their journaled values back by id, then restores their
+Required setting.
+
+`importTable(name, fields, records)` validates every value with the same field
+parser as record forms, creates the table and inserts ids 1…n with one prepared
+statement, and writes one `importTable` event recording the field list and count.
+Undo drops the table only if its field list, count and id range still match.
+
+Two boundaries separate history: the lifetime boundary (last active `createTable`
+or `importTable`) keeps record ids from being reused; the design boundary (any
+schema event) limits record history and selective restore to images that use the
+current field list. Creating a Yes/No or Date field, redesigning or importing sets
+`schema_version` to `3-preview` in the same transaction; selective restore only
+upgrades `1-preview` to `2-preview`, never downgrades. Builds that predate
+`3-preview` open such files read-only.
+
+## SQL view, export and relationships
+
+`src/engine/sqlQuery.ts` splits SQL into statements lexically (comments, string
+literals and all four identifier quotings are skipped) **before anything is
+prepared**. This matters because SQLite applies flag pragmas such as
+`query_only` while a statement is prepared, so preparing an unchecked second
+statement could switch off read-only mode. Exactly one statement beginning with
+SELECT, WITH or VALUES is accepted; `PRAGMA query_only` is verified to be on
+before and after preparation and reasserted afterwards, so a WITH … DELETE is
+still refused by SQLite. Rows are read with `useBigInt`; reading stops after
+1,000 rows. EXPLAIN QUERY PLAN is prepended only by the app. `src/ui/sqlView.ts`
+renders results, plans, a 50-entry session history and CSV download.
+
+`src/engine/exchange.ts` contains an RFC 4180 parser with delimiter detection,
+conservative type inference (leading-zero codes and out-of-range integers stay
+text), name de-duplication, a JSON-array planner, and writers for CSV/TSV, JSON
+(integers written digit-for-digit), HTML, XML (field names as attributes, blobs
+in base64) and SQL scripts (round-trippable REAL literals, `X'…'` blobs, generated
+columns omitted, virtual tables skipped). `DatabaseSession.exportData` returns
+every row of the current view; `sqlScript` exports user objects only, so the
+native catalog and journal are not included. `relationships()` groups
+`PRAGMA foreign_key_list` rows per constraint. `src/ui/importPanel.ts` previews
+imports (nothing is written before confirmation) and draws the relationships
+list and SVG diagram.
 
 ## Record history and selective restoration
 
@@ -222,8 +297,10 @@ SUM/AVG first reject nonnumeric non-NULL stored values rather than accept
 SQLite's implicit conversion of text to zero. Nonfinite numeric results are also
 reported. Average and floating-point sums use SQLite arithmetic and are marked
 approximate. Text minimum/maximum follows the current SQLite storage types and
-collations. These are simple aggregates, not grouped queries or statistical
-variance/deviation calculations.
+collations. Standard deviation and variance use the sample (n − 1) formula in
+two passes (COUNT/AVG, then the sum of squared deviations with the mean bound as
+a parameter), avoiding the cancellation error of AVG(x²) − AVG(x)²; fewer than two
+values give NULL. Totals are not grouped queries.
 
 `src/ui/totalsRow.ts` renders column selectors and results in a native table
 footer, with a full-result count and explanatory text. Long text/blob displays
@@ -398,4 +475,6 @@ uploads are not implemented by this feature.
   detection; see [../tests/corpus/README.md](../tests/corpus/README.md).
 - `scripts/gen-plan.py --check` validates the planning sources.
 - GitHub Actions runs Python checks on Linux/Windows and the web tests/build on
-  Linux. Platform installers and release artifacts are not configured.
+  Linux. Pushing a `v*` tag that matches `package.json` runs `release.yml`, which
+  tests, builds and publishes a GitHub prerelease containing the zipped `dist/`
+  and its SHA-256 checksum. Native platform installers are not configured.

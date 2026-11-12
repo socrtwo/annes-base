@@ -72,3 +72,16 @@ Jackcess (Apache 2.0, Java) is a reference for the Jet/ACE formats; if code is p
 ## Online services
 
 Anne's Base works offline. Online services are called only when the user invokes the matching command: the chosen AI services (AI tab), server connections the user configures, the suite relay for app pages, shared forms and synchronization, model and module downloads, Open URL and web imports, address standardization services (optional), map tiles (map views; OpenStreetMap tile usage policy respected, offline basemap optional), and update checks (desktop and APK builds, opt-in). By default AI services receive only the schema, never data (see [AI-PLAN.md](AI-PLAN.md)).
+
+## License verification
+
+Checked 2026-11-12 against each package's declared license in the npm registry (`npm view <package> license`). Registry metadata is the publisher's declaration; recheck the repository's LICENSE file when a version is adopted.
+
+| Package | Declared license | Use |
+|---|---|---|
+| `sql.js` | MIT | bundled SQLite WASM engine |
+| `@duckdb/duckdb-wasm` | MIT | optional analytical module (not yet included) |
+| `onnxruntime-web` | MIT | planned on-device model runtime (not yet included) |
+| `@huggingface/transformers` | Apache-2.0 | planned on-device model runtime (not yet included) |
+
+No model weights have been selected. Each model's weights carry their own license, which must be checked separately when a model is chosen; non-commercial or otherwise restricted weights are not used.
