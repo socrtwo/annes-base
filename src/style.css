@@ -198,3 +198,37 @@ main > p { font-size: 12px; }
 .totals-note { font-size: 12px; color: #616161; }
 
 .total-value.numeric-total { white-space: nowrap; overflow-wrap: normal; }
+
+/* Design view, SQL view, import, relationships and keyboard settings */
+.database-editor .field-definition:has(button[data-move]) { display: flex; flex-wrap: wrap; align-items: end; }
+.database-editor .field-definition small { flex-basis: 100%; color: #616161; }
+.database-editor select { padding: 8px; font: inherit; }
+.sql-view, .import-panel, .relationships, .keyboard-settings { margin: 20px 0; padding: 16px; border: 1px solid #d1d1d1; border-radius: 6px; background: #f7f4f5; }
+.sql-view h3, .import-panel h3, .relationships h3 { font-size: 18px; font-weight: 600; color: #242424; }
+.sql-editor { display: block; width: 100%; box-sizing: border-box; padding: 10px; border: 1px solid #b1b1b1; border-radius: 5px; font: 13px/1.5 ui-monospace, 'Cascadia Mono', Consolas, monospace; resize: vertical; tab-size: 2; }
+.sql-view .editor-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
+.sql-view [role=alert], .import-panel [role=alert] { color: #a12635; overflow-wrap: anywhere; }
+.sql-results { max-height: 480px; overflow: auto; }
+.sql-results table { border-collapse: collapse; background: white; font-size: 13px; }
+.sql-results th, .sql-results td { padding: 6px 10px; border: 1px solid #ddd; text-align: left; max-width: 320px; overflow-wrap: anywhere; white-space: pre-wrap; }
+.query-plan { font-family: ui-monospace, Consolas, monospace; font-size: 13px; }
+.query-history li { display: flex; gap: 8px; align-items: center; margin: 4px 0; }
+.query-history code { overflow-wrap: anywhere; font-size: 12px; }
+.import-panel label, .keyboard-settings label { display: flex; flex-direction: column; gap: 6px; margin: 10px 0; max-width: 560px; }
+.import-panel input:not([type=file]), .import-panel select, .keyboard-settings input, .keyboard-settings select { padding: 8px; border: 1px solid #b1b1b1; border-radius: 5px; font: inherit; max-width: 100%; }
+.import-preview .field-definition { grid-template-columns: minmax(120px, 1fr) minmax(100px, 1fr) minmax(0, 1.5fr); }
+.import-preview small { color: #616161; overflow-wrap: anywhere; }
+.relationship-diagram { width: 100%; max-width: 900px; height: auto; margin: 12px 0; }
+.relationship-diagram rect { fill: white; stroke: var(--accent); stroke-width: 1.5; }
+.relationship-diagram line { stroke: #616161; stroke-width: 1.5; }
+.relationship-diagram text { font: 13px 'Segoe UI', system-ui, sans-serif; fill: #242424; }
+.keyboard-settings { margin: 20px 28px; background: white; }
+.shortcut-list li { display: flex; gap: 10px; align-items: center; margin: 4px 0; }
+kbd { padding: 2px 6px; border: 1px solid #b1b1b1; border-bottom-width: 2px; border-radius: 4px; background: #fafafa; font: 12px ui-monospace, Consolas, monospace; }
+.options-actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 14px 0; }
+.notice { padding: 0 28px 8px; margin: 0; background: white; font-size: 12px; }
+.notice:empty { display: none; }
+@media (max-width: 640px) {
+  .import-preview .field-definition { grid-template-columns: minmax(0, 1fr); }
+  .keyboard-settings { margin: 16px; }
+}

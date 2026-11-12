@@ -1,5 +1,7 @@
 import { catalog, createRegistry } from '../commands/registry';
-import { addAllQatChoices, defaultPreferences, loadPreferences, savePreferences, type PreferenceStorage } from '../prefs';
+import { addAllQatChoices, defaultPreferences, exportSettings, importSettings, loadPreferences, savePreferences, type PreferenceStorage } from '../prefs';
+import { effectiveBindings, installShortcuts, shortcutsFor } from '../keyboard';
+import { mountKeyboardSettings } from './keyboardSettings';
 import { createBackstage } from './backstage';
 import { mountDatabasePane } from './databasePane';
 
@@ -13,7 +15,16 @@ function element<K extends keyof HTMLElementTagNameMap>(tag: K, text?: string): 
   return node;
 }
 
-export function mountShell(root: HTMLElement, storage?: PreferenceStorage): { dispose: () => void } {
+export interface ShellFiles { download: (bytes: Uint8Array, name: string, type: string) => void }
+const browserFiles: ShellFiles = {
+  download: (bytes, name, type) => {
+    const url = URL.createObjectURL(new Blob([Uint8Array.from(bytes).buffer], { type }));
+    const link = document.createElement('a'); link.href = url; link.download = name; document.body.append(link);
+    try { link.click(); } finally { link.remove(); setTimeout(() => URL.revokeObjectURL(url), 30_000); }
+  },
+};
+
+export function mountShell(root: HTMLElement, storage?: PreferenceStorage, files: ShellFiles = browserFiles): { dispose: () => void } {
   mountedShells.get(root)?.();
   const registry = createRegistry();
   // Access to localStorage itself can throw in private/restricted browser contexts.
@@ -33,6 +44,10 @@ export function mountShell(root: HTMLElement, storage?: PreferenceStorage): { di
   const status = element('p', 'No database is open.');
   status.className = 'status';
   status.setAttribute('role', 'status');
+  // Settings messages stay visible while database status updates replace the main line.
+  const notice = element('p');
+  notice.className = 'notice';
+  notice.setAttribute('role', 'status');
   const persist = () => {
     if (!storage || !savePreferences(storage, prefs)) status.textContent = 'Preferences apply for this session; browser storage is unavailable.';
   };
@@ -205,7 +220,8 @@ export function mountShell(root: HTMLElement, storage?: PreferenceStorage): { di
     for (const command of matches.slice(0, 60)) {
       const row = element('li');
       const description = element('div');
-      description.append(element('strong', command.label), element('small', `${command.tab} / ${command.group} · ${command.id}`));
+      const keys = shortcutsFor(bindings, command.id);
+      description.append(element('strong', command.label), element('small', `${command.tab} / ${command.group} · ${command.id}${keys.length ? ` · ${keys.join(', ')}` : ''}`));
       const state = element('span', registry.isAvailable(command.id) ? 'Available' : 'Planned');
       state.className = 'badge';
       const pin = element('button', prefs.qat.includes(command.id) ? 'Unpin' : 'Pin');
@@ -222,6 +238,37 @@ export function mountShell(root: HTMLElement, storage?: PreferenceStorage): { di
     }
   }
   search.addEventListener('input', renderResults);
+  let bindings = effectiveBindings(registry, prefs.keys ?? {});
+  const keyboard = element('section');
+  const keyboardSettings = mountKeyboardSettings(keyboard, registry, () => prefs.keys ?? {}, next => {
+    prefs = { ...prefs }; if (Object.keys(next).length) prefs.keys = next; else delete prefs.keys;
+    bindings = effectiveBindings(registry, prefs.keys ?? {}); persist(); renderResults();
+  });
+  const removeShortcuts = installShortcuts(document, registry, () => bindings);
+  const settingsInput = element('input'); settingsInput.type = 'file'; settingsInput.accept = '.json,application/json'; settingsInput.hidden = true;
+  settingsInput.setAttribute('aria-label', 'Import settings file');
+  const showWorkspaceOnly = () => { backstage.element.hidden = true; workspace.hidden = false; fileButton.setAttribute('aria-expanded', 'false'); };
+  const applyImported = (text: string) => {
+    try {
+      prefs = importSettings(text, registry);
+      bindings = effectiveBindings(registry, prefs.keys ?? {});
+      layout.value = prefs.menuLayout; renderPins(); renderMenus(); renderResults(); keyboardSettings.refresh(); persist();
+      notice.textContent = `Settings imported: ${prefs.qat.length} Quick Access commands, ${Object.keys(prefs.keys ?? {}).length} shortcut changes and the ${catalog.menuLayouts[prefs.menuLayout as keyof typeof catalog.menuLayouts].name} menu layout.`;
+    } catch (error) { notice.textContent = `Settings were not imported: ${error instanceof Error ? error.message : String(error)}`; }
+  };
+  settingsInput.addEventListener('change', () => {
+    const file = settingsInput.files?.[0]; settingsInput.value = '';
+    if (!file) return;
+    if (file.size > 1024 * 1024) { notice.textContent = 'Settings were not imported: the file is larger than 1 MiB.'; return; }
+    void file.text().then(applyImported, error => { notice.textContent = `Settings were not imported: ${error instanceof Error ? error.message : String(error)}`; });
+  });
+  registry.bind('view.customizeKeyboard', () => { showWorkspaceOnly(); keyboardSettings.show(); });
+  registry.bind('file.exportSettings', () => {
+    files.download(new TextEncoder().encode(exportSettings(prefs)), 'AnnesBase-settings.json', 'application/json');
+    notice.textContent = 'Settings download started: Quick Access pins, menu layout and keyboard shortcuts.';
+  });
+  registry.bind('file.importSettings', () => settingsInput.click());
+  registry.bind('file.options', () => { classicMenus.close(); workspace.hidden = true; fileButton.setAttribute('aria-expanded', 'true'); backstage.open('Options'); });
   main.append(searchLabel, search, count, results);
   const classic = element('details');
   classic.className = 'classic-options';
@@ -238,9 +285,9 @@ export function mountShell(root: HTMLElement, storage?: PreferenceStorage): { di
   const content = element('div');
   content.className = 'workspace-content';
   const databaseContainer = element('div');
-  content.append(intro, databaseContainer, qat, main);
+  content.append(intro, databaseContainer, qat, main, keyboard, settingsInput);
   workspace.append(ribbon, classic, content);
-  root.append(header, workspace, backstage.element, status);
+  root.append(header, workspace, backstage.element, status, notice);
   const databasePane = mountDatabasePane(databaseContainer, registry, (name, busy) => {
     status.textContent = busy ? 'Loading SQLite…' : name ? `${name} · Database preview` : 'No database is open.';
     for (const button of root.querySelectorAll<HTMLButtonElement>('button[data-command]')) {
@@ -259,7 +306,7 @@ export function mountShell(root: HTMLElement, storage?: PreferenceStorage): { di
   let disposed = false;
   const dispose = () => {
     if (disposed) return; disposed = true;
-    classicMenus.dispose(); databasePane.dispose(); mountedShells.delete(root);
+    classicMenus.dispose(); databasePane.dispose(); removeShortcuts(); mountedShells.delete(root);
   };
   mountedShells.set(root, dispose);
   return { dispose };

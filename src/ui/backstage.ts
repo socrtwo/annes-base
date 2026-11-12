@@ -15,7 +15,7 @@ export function createBackstage(
   commandButton: (id: string) => HTMLButtonElement,
   onClose: () => void,
   onCustomize: () => void,
-): { element: HTMLElement; open: () => void } {
+): { element: HTMLElement; open: (page?: typeof FILE_PAGES[number]['title']) => void } {
   const backstage = document.createElement('section');
   backstage.className = 'backstage';
   backstage.hidden = true;
@@ -66,8 +66,12 @@ export function createBackstage(
       customize.textContent = 'Customize Quick Access';
       customize.addEventListener('click', onCustomize);
       content.append(customize);
+      const options = document.createElement('div');
+      options.className = 'options-actions';
+      options.append(commandButton('view.customizeKeyboard'), commandButton('file.exportSettings'), commandButton('file.importSettings'));
+      content.append(options);
       const explanation = document.createElement('p');
-      explanation.textContent = 'Pin commands from Command search. Use Classic menus below the ribbon to choose a historic layout. Pins and layout selection are saved in this browser when storage is available.';
+      explanation.textContent = 'Pin commands from Command search. Use Classic menus below the ribbon to choose a historic layout. Pins, layout and keyboard shortcuts are saved in this browser when storage is available; Export Settings saves them to a file you can import on another device.';
       content.append(explanation);
     } else {
       const actions = document.createElement('div');
@@ -97,6 +101,11 @@ export function createBackstage(
   render(FILE_PAGES[0]);
   return {
     element: backstage,
-    open: () => { backstage.hidden = false; render(FILE_PAGES[0]); back.focus(); },
+    open: (page = 'Home') => {
+      backstage.hidden = false;
+      const selected = FILE_PAGES.find(entry => entry.title === page) ?? FILE_PAGES[0];
+      render(selected, selected !== FILE_PAGES[0]);
+      if (selected === FILE_PAGES[0]) back.focus();
+    },
   };
 }
