@@ -232,3 +232,11 @@ kbd { padding: 2px 6px; border: 1px solid #b1b1b1; border-bottom-width: 2px; bor
   .import-preview .field-definition { grid-template-columns: minmax(0, 1fr); }
   .keyboard-settings { margin: 16px; }
 }
+.journal-view { margin: 20px 0; padding: 16px; border: 1px solid #c99aa9; border-radius: 6px; background: #fffafa; }
+.journal-view h3 { font-size: 18px; font-weight: 600; color: #242424; overflow-wrap: anywhere; }
+.journal-view form { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; margin: 12px 0; }
+.journal-view label { display: flex; flex-direction: column; gap: 6px; }
+.journal-view input { padding: 8px; border: 1px solid #bbb; border-radius: 5px; font: inherit; max-width: 100%; }
+.journal-view [role=alert] { color: #a12635; }
+.journal-view table { border-collapse: collapse; background: white; font-size: 13px; }
+.journal-view th, .journal-view td { padding: 6px 10px; border: 1px solid #ddd; text-align: left; max-width: 300px; overflow-wrap: anywhere; white-space: pre-wrap; }

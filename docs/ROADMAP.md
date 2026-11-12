@@ -52,7 +52,8 @@
 - Undo Delete, Record History, Show Table as of (the journal's first uses).
   - [x] Global Undo restores deletions and previous row values; the latest 100 journal entries are visible in Change history.
   - [x] Per-record before/after history with older-page loading, deleted-record id lookup and selective restore as a new undoable change; history and restore survive download/reload.
-  - [ ] Actor attribution, related-record and bulk restoration, as-of table views and the full Undo Delete workflow.
+  - [x] Undo Delete lists records deleted under the current design that are still missing and restores any one as a new undoable change; Show Table as of rebuilds a read-only table at any time since its current design from active journal events.
+  - [ ] Actor attribution, related-record and bulk restoration, as-of views across redesigns and of undone changes (undo times are not journaled yet).
 - [x] A catalog test comparing the registry with `docs/commands-plan.json`, including every menu, ribbon and Home-tab reference. This checks registration coverage, not implementation of every planned command.
 
 ## M2 — Queries and relationships

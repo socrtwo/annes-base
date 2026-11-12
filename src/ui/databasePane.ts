@@ -4,6 +4,7 @@ import { DatabaseSession, MAX_DATABASE_BYTES, PAGE_SIZE, type Cell } from '../en
 import { designEditor, recordEditor, tableEditor } from './editors';
 import { mountSqlView } from './sqlView';
 import { mountImportPanel, showRelationships } from './importPanel';
+import { showDeletedRecords, showTableAsOf } from './journalViews';
 import { toDelimited, toHtml, toJson, toXml } from '../engine/exchange';
 import { IndexedDbRecoveryStore, type RecoveryMetadata, type RecoveryStore } from '../storage/recovery';
 import { DocumentAutosave } from '../storage/autosave';
@@ -122,6 +123,8 @@ export function mountDatabasePane(
   const importHost = node('section');
   const relationshipsHost = node('section'); relationshipsHost.hidden = true;
   const closeRelationships = () => { relationshipsHost.hidden = true; relationshipsHost.replaceChildren(); };
+  const journalHost = node('section'); journalHost.hidden = true;
+  const closeJournalView = () => { journalHost.hidden = true; journalHost.replaceChildren(); };
   const recovery = node('section'); recovery.className = 'browser-recovery';
   recovery.setAttribute('aria-label', 'Browser recovery copies'); recovery.hidden = !recoveryStore;
   const recoveryHeading = node('h3', 'Browser recovery copies'); recoveryHeading.tabIndex = -1;
@@ -144,7 +147,7 @@ export function mountDatabasePane(
     const snapshot = snapshots?.beforeChange();
     change(); dataRevision++; totalCache = undefined;
     if (snapshot) snapshots?.saveAutomatic(snapshot);
-    cancelEditing(); closeHistory(); selectedRecord = undefined;
+    cancelEditing(); closeHistory(); closeJournalView(); selectedRecord = undefined;
     if (selected && !session!.tables().includes(selected)) { selected = session!.tables()[0]; offset = 0; resetView(); }
     if (selected && offset > 0 && !session!.page(selected, offset, effectiveView()).rows.length) offset = Math.max(0, offset - PAGE_SIZE);
     message.textContent = 'Change recorded in the journal.';
@@ -274,6 +277,20 @@ export function mountDatabasePane(
     try { showRelationships(relationshipsHost, session.tables(), session.relationships(), session.editable, closeRelationships); }
     catch (error) { message.textContent = `Cannot read relationships: ${error instanceof Error ? error.message : String(error)}`; }
   }
+  function undoDelete() {
+    if (!session || !selected || !session.canEditTable(selected) || busy || draftChanged && !confirmDiscard()) return;
+    cancelEditing(); showWorkspace();
+    const table = selected;
+    showDeletedRecords(journalHost, session, table, (eventId, recordId) => {
+      apply(() => { session!.undoDelete(table, eventId, recordId); selected = table; });
+      message.textContent = `Record ${recordId} restored. Undo removes it again.`;
+    }, closeJournalView);
+  }
+  function tableAsOf() {
+    if (!session || !selected || !session.canEditTable(selected) || busy) return;
+    showWorkspace();
+    showTableAsOf(journalHost, session, selected, closeJournalView);
+  }
   function editRecord(insert = false) {
     if (!session || !selected || !session.canEditTable(selected) || busy || !insert && !selectedRecord) return;
     if (draftChanged && !confirmDiscard()) return;
@@ -393,7 +410,7 @@ export function mountDatabasePane(
     for (const name of session?.tables() ?? []) {
       const item = node('button', name);
       item.setAttribute('aria-pressed', String(name === selected));
-      item.addEventListener('click', () => { if (draftChanged && !confirmDiscard()) return; cancelEditing(); closeHistory(); selectedRecord = undefined; selected = name; offset = 0; resetView(); render(); });
+      item.addEventListener('click', () => { if (draftChanged && !confirmDiscard()) return; cancelEditing(); closeHistory(); closeJournalView(); selectedRecord = undefined; selected = name; offset = 0; resetView(); render(); });
       navigation.append(item);
     }
     for (const control of [newButton, sampleButton, openButton]) control.disabled = busy;
@@ -456,7 +473,7 @@ export function mountDatabasePane(
       const tables = candidate.tables();
       session?.close();
       session = candidate;
-      cancelEditing(); closeHistory(); closeRelationships(); selectedRecord = undefined;
+      cancelEditing(); closeHistory(); closeRelationships(); closeJournalView(); selectedRecord = undefined;
       candidate = undefined;
       selected = tables[0];
       offset = 0;
@@ -487,7 +504,7 @@ export function mountDatabasePane(
     if (busy || !discard()) return;
     showWorkspace();
     session?.close(); session = undefined; autosave = undefined; snapshotDocumentId = undefined; selected = undefined; offset = 0; resetView();
-    cancelEditing(); closeHistory(); closeRelationships(); selectedRecord = undefined;
+    cancelEditing(); closeHistory(); closeRelationships(); closeJournalView(); selectedRecord = undefined;
     message.textContent = 'Database closed. Original files were not changed.';
     render();
   }
@@ -572,6 +589,8 @@ export function mountDatabasePane(
     ['record.totals', () => totalsButton.click(), () => !!session && !!selected && !busy],
     ['record.history', () => report(() => openRecordHistory()), () => !!session && !!selected && session.canEditTable(selected) && !busy],
     ['create.tableDesign', createTable, () => !!session?.editable && !busy],
+    ['record.undoDelete', () => report(undoDelete), () => !!session && !!selected && session.canEditTable(selected) && !busy],
+    ['data.asOf', () => report(tableAsOf), () => !!session && !!selected && session.canEditTable(selected) && !busy],
     ['view.design', () => report(designTable), () => !!session && !!selected && session.canEditTable(selected) && !busy],
     ['table.addField', () => report(designTable), () => !!session && !!selected && session.canEditTable(selected) && !busy],
     ['table.renameField', () => report(designTable), () => !!session && !!selected && session.canEditTable(selected) && !busy],
@@ -597,7 +616,7 @@ export function mountDatabasePane(
   ] as const) registry.bind(id, handler, enabled);
   if (recoveryStore) registry.bind('file.openRecent', () => { showWorkspace(); recovery.scrollIntoView?.({ block: 'start' }); recoveryHeading.focus(); }, () => recoveryEntries.length > 0 && !busy);
   grid.append(navigation, data);
-  pane.append(title, message, actions, input, recovery, snapshotPanel, importHost, relationshipsHost, editing, recordHistory, sqlPanel, tools, savedViewsPanel, grid, history, note);
+  pane.append(title, message, actions, input, recovery, snapshotPanel, importHost, relationshipsHost, journalHost, editing, recordHistory, sqlPanel, tools, savedViewsPanel, grid, history, note);
   container.append(pane);
   render();
   void refreshRecovery();

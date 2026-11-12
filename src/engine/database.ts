@@ -158,6 +158,9 @@ export class DatabaseSession {
   history() { this.assertOpen(); return this.journal?.history() ?? []; }
   recordHistory(table: string, id: string, beforeEvent?: string) { return this.writable().recordHistory(table, id, beforeEvent); }
   restoreVersion(table: string, id: string, eventId: string, side: 'before' | 'after', expectedCurrent: string | null) { this.writable().restoreVersion(table, id, eventId, side, expectedCurrent); }
+  deletedRecords(table: string) { return this.writable().deletedRecords(table); }
+  undoDelete(table: string, eventId: string, recordId: string): void { this.writable().restoreVersion(table, recordId, eventId, 'before', null); }
+  tableAsOf(table: string, time: string) { return this.writable().tableAsOf(table, time); }
   canUndo(): boolean { this.assertOpen(); return this.journal?.canUndo() ?? false; }
   undo(): void { this.writable().undo(); }
 

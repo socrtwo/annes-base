@@ -186,6 +186,18 @@ current field list. Creating a Yes/No or Date field, redesigning or importing se
 upgrades `1-preview` to `2-preview`, never downgrades. Builds that predate
 `3-preview` open such files read-only.
 
+### Undo Delete and Show Table as of
+
+`deletedRecords` scans active `delete` events after the design boundary, newest
+first, keeps each record id once and lists it only if the row is absent; Undo
+Delete restores its before image through `restoreVersion`, so the same
+consistency checks apply and the restore is itself undoable. `tableAsOf` starts
+from the current rows and reverses active events newer than the requested
+instant (insert → remove, update/restore/delete → before image). It refuses
+times before the current design, and counts undone events at or before the
+instant, because the journal records when a change happened but not when it was
+undone.
+
 ## SQL view, export and relationships
 
 `src/engine/sqlQuery.ts` splits SQL into statements lexically (comments, string

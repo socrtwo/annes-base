@@ -367,6 +367,46 @@ export class NativeJournal {
       this.event('restore', table, id, encode(before), encode(this.record(table, id)));
     });
   }
+  /** Records deleted under the current design that are still absent, newest deletion first. */
+  deletedRecords(table: string, limit = 50): { eventId: string; recordId: string; time: string; values: Cell[] }[] {
+    const fields = this.fields(table);
+    const events = rows(this.db, "SELECT id, record_id, created_at, before_json FROM qb_journal WHERE table_name=? AND operation='delete' AND undone=0 AND id>? ORDER BY id DESC LIMIT 1000", [table, this.designBoundary(table)]);
+    const seen = new Set<string>(); const result = [];
+    for (const [eventId, recordId, time, before] of events) {
+      const id = String(recordId);
+      if (seen.has(id)) continue;
+      seen.add(id);
+      if (this.current(table, id)) continue;
+      result.push({ eventId: String(eventId), recordId: id, time: String(time), values: decode(String(before), fields) });
+      if (result.length >= limit) break;
+    }
+    return result;
+  }
+
+  /**
+   * The table as it was at an ISO time, rebuilt in memory by reversing later active journal events.
+   * Changes that were undone are not part of the active history, so they are left out entirely.
+   */
+  tableAsOf(table: string, time: string): { columns: string[]; rows: Cell[][]; undoneSkipped: number } {
+    const fields = this.fields(table);
+    if (typeof time !== 'string' || Number.isNaN(Date.parse(time))) throw new Error('Choose a valid date and time.');
+    const instant = new Date(time).toISOString();
+    const boundary = this.designBoundary(table);
+    const start = rows(this.db, 'SELECT created_at FROM qb_journal WHERE id=?', [boundary])[0];
+    if (start && instant < String(start[0])) throw new Error(`The table's current design dates from ${new Date(String(start[0])).toLocaleString()}; choose a later time.`);
+    const state = new Map<string, Cell[]>(rows(this.db, `SELECT * FROM ${quoteName(table)}`).map(row => [String(row[0]), row]));
+    const later = rows(this.db, 'SELECT operation, record_id, before_json FROM qb_journal WHERE table_name=? AND id>? AND undone=0 AND created_at>? ORDER BY id DESC', [table, boundary, instant]);
+    for (const [operation, recordId, before] of later) {
+      const id = String(recordId);
+      if (operation === 'insert' || before === null) state.delete(id);
+      else if (['update', 'restore', 'delete'].includes(String(operation))) state.set(id, decode(String(before), fields));
+      else throw new Error('Unsupported journal operation.');
+    }
+    const undoneSkipped = Number(rows(this.db, 'SELECT COUNT(*) FROM qb_journal WHERE table_name=? AND id>? AND undone=1 AND created_at<=?', [table, boundary, instant])[0][0]);
+    const ordered = [...state.values()].sort((a, b) => (a[0] as bigint) < (b[0] as bigint) ? -1 : (a[0] as bigint) > (b[0] as bigint) ? 1 : 0);
+    return { columns: ['id', ...fields.map(field => field.name)], rows: ordered, undoneSkipped };
+  }
+
   canUndo(): boolean { return rows(this.db, 'SELECT id FROM qb_journal WHERE undone=0 LIMIT 1').length > 0; }
   undo(): void {
     const entry = rows(this.db, 'SELECT id, operation, table_name, record_id, before_json, after_json FROM qb_journal WHERE undone=0 ORDER BY id DESC LIMIT 1')[0];
