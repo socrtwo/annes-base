@@ -1,6 +1,6 @@
 import { quoteName } from './journal';
 
-export interface TableColumn { name: string; type: string; primaryKey: number; kind: 'text' | 'integer' | 'number' | 'blob' }
+export interface TableColumn { name: string; type: string; primaryKey: number; kind: 'text' | 'integer' | 'number' | 'date' | 'blob' }
 export type FilterOperator = 'contains' | 'equals' | 'notEquals' | 'gt' | 'gte' | 'lt' | 'lte' | 'isNull' | 'isNotNull';
 export interface SortLevel { column: string; direction: 'ASC' | 'DESC' }
 export interface FilterCondition { column: string; operator: FilterOperator; value?: string }
@@ -32,6 +32,8 @@ export const FILTER_OPERATORS: { value: FilterOperator; label: string }[] = [
 ];
 export function columnKind(type: string): TableColumn['kind'] {
   const name = type.toUpperCase();
+  if (name === 'BOOLEAN') return 'integer';
+  if (/^(DATE|DATETIME|TIMESTAMP)$/.test(name.trim())) return 'date';
   if (name.includes('INT')) return 'integer';
   if (/CHAR|CLOB|TEXT/.test(name) || !name) return 'text';
   if (name.includes('BLOB')) return 'blob';

@@ -19,7 +19,7 @@ export function totalsRow(columns: TableColumn[], editable: boolean, choices: To
       if (typeof value.value === 'bigint' || typeof value.value === 'number') display.classList.add('numeric-total');
       const text = value.value instanceof Uint8Array ? `BLOB · ${value.value.byteLength} bytes` : String(value.value);
       const formatted = text.length > 2000 ? text.slice(0, 2000) + '… [display shortened]' : text;
-      display.textContent = value.error ? 'Unavailable' : value.value === null ? '—' : `${value.operation === 'average' || value.operation === 'sum' && typeof value.value === 'number' ? '≈ ' : ''}${formatted}`;
+      display.textContent = value.error ? 'Unavailable' : value.value === null ? '—' : `${['average', 'stdev', 'variance'].includes(value.operation) || value.operation === 'sum' && typeof value.value === 'number' ? '≈ ' : ''}${formatted}`;
       if (value.error) { const notice = document.createElement('span'); notice.setAttribute('role', 'alert'); notice.textContent = value.error; cell.append(notice); }
     }
     cell.prepend(select, display); row.append(cell);
@@ -28,6 +28,6 @@ export function totalsRow(columns: TableColumn[], editable: boolean, choices: To
   const summary = document.createElement('p'); summary.className = 'totals-summary'; summary.setAttribute('role', 'status');
   summary.textContent = result ? `${result.records} matching records · Totals cover every matching row, not just this page.` : `Totals unavailable: ${error}`;
   const note = document.createElement('p'); note.className = 'totals-note';
-  note.textContent = 'Count values skips NULL; — means no non-NULL values. Averages and decimal sums are approximate. Whole-number sums remain exact within the signed 64-bit range. Totals reflect committed records; unsaved forms are excluded.';
+  note.textContent = 'Count values skips NULL; — means no non-NULL values. Averages, decimal sums, standard deviation and variance (sample, n − 1) are approximate. Whole-number sums remain exact within the signed 64-bit range. Totals reflect committed records; unsaved forms are excluded.';
   return { footer, summary, note };
 }

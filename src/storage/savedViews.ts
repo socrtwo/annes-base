@@ -20,7 +20,7 @@ export function normalizeDefinition(value: ViewDefinition): ViewDefinition {
   if (!text(value.table, 1024) || !text(value.sourceName, 1024) || typeof value.filterEnabled !== 'boolean' || !Array.isArray(value.columns) || !value.columns.length || value.columns.length > 2048) throw new Error('Invalid saved-view table metadata.');
   const names = new Set<string>();
   const columns = value.columns.map(column => {
-    if (!column || !text(column.name, 1024) || typeof column.type !== 'string' || column.type.length > 1024 || !Number.isSafeInteger(column.primaryKey) || column.primaryKey < 0 || !['text', 'integer', 'number', 'blob'].includes(column.kind) || column.kind !== columnKind(column.type) || names.has(column.name)) throw new Error('Invalid saved-view column metadata.');
+    if (!column || !text(column.name, 1024) || typeof column.type !== 'string' || column.type.length > 1024 || !Number.isSafeInteger(column.primaryKey) || column.primaryKey < 0 || !['text', 'integer', 'number', 'date', 'blob'].includes(column.kind) || column.kind !== columnKind(column.type) && !(column.kind === 'number' && columnKind(column.type) === 'date') || names.has(column.name)) throw new Error('Invalid saved-view column metadata.');
     names.add(column.name); return { name: column.name, type: column.type, primaryKey: column.primaryKey, kind: column.kind };
   });
   if (!value.view || typeof value.view !== 'object' || Array.isArray(value.view)) throw new Error('Invalid saved-view settings.');

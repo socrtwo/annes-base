@@ -1,5 +1,7 @@
 import type { Database, SqlJsStatic } from 'sql.js';
-import { NativeJournal, type Field, type RecordValues } from './journal';
+import { NativeJournal, rows as queryRows, type Field, type FieldChange, type RecordValues } from './journal';
+import { explainQuery, runReadOnlyQuery } from './sqlQuery';
+import { toSqlScript, type ExportData, type ScriptObject } from './exchange';
 import { columnKind, compileView, type TableColumn, type TableView } from './tableView';
 import { tableTotals, type TotalChoice } from './totals';
 
@@ -7,6 +9,7 @@ export const MAX_DATABASE_BYTES = 32 * 1024 * 1024;
 export const PAGE_SIZE = 100;
 export type Cell = string | number | bigint | Uint8Array | null;
 export interface TablePage { columns: string[]; rows: Cell[][]; offset: number; hasMore: boolean }
+export interface Relationship { table: string; columns: string[]; referencedTable: string; referencedColumns: string[]; onUpdate: string; onDelete: string }
 const signature = 'SQLite format 3\0';
 const quote = (identifier: string) => '"' + identifier.replaceAll('"', '""') + '"';
 
@@ -41,7 +44,7 @@ export class DatabaseSession {
         try {
           const metadata = db.exec("SELECT key, value FROM qb_meta WHERE key IN ('application', 'schema_version')");
           const values = new Map(metadata[0]?.values.map(row => [row[0], row[1]]));
-          isNative = values.get('application') === 'annes-base' && ['0-preview', '1-preview', '2-preview'].includes(String(values.get('schema_version')));
+          isNative = values.get('application') === 'annes-base' && ['0-preview', '1-preview', '2-preview', '3-preview'].includes(String(values.get('schema_version')));
         } catch { /* An unrelated SQLite table named qb_meta is ordinary user data. */ }
       }
       return new DatabaseSession(db, name, isNative, isNative && !readOnly ? NativeJournal.attach(db) : undefined);
@@ -83,6 +86,46 @@ export class DatabaseSession {
     } finally { statement.free(); }
   }
 
+  /** Every row of the current view (not just one page), for export. */
+  exportData(table: string, view: TableView = {}): ExportData {
+    const columns = this.columns(table);
+    const query = compileView(columns, view);
+    return { name: table, columns: columns.map(column => column.name), types: columns.map(column => column.type), rows: queryRows(this.db, `SELECT ${columns.map(column => quote(column.name)).join(', ')} FROM ${quote(table)}${query.where}${query.order}`, query.params) };
+  }
+
+  /** User tables, indexes, views and triggers with their rows as a portable SQL script. */
+  sqlScript(): string {
+    this.assertOpen();
+    const tables = new Set(this.tables());
+    const objects = (queryRows(this.db, "SELECT type, name, tbl_name, sql FROM sqlite_schema WHERE sql IS NOT NULL AND substr(name, 1, 7) <> 'sqlite_' ORDER BY rowid") as [string, string, string, string][])
+      .map(([type, name, table, sql]) => ({ type, name, table, sql }) as ScriptObject)
+      .filter(object => (object.type === 'view' || tables.has(object.table)) && !/^\s*CREATE\s+VIRTUAL\s/i.test(object.sql));
+    return toSqlScript(objects, table => {
+      // Generated columns are recomputed by SQLite and cannot be inserted.
+      const columns = (queryRows(this.db, `PRAGMA table_xinfo(${quote(table)})`)).filter(row => row[6] === 0n).map(row => String(row[1]));
+      return { columns, rows: queryRows(this.db, `SELECT ${columns.map(quote).join(', ')} FROM ${quote(table)} ORDER BY rowid`) };
+    }, this.name);
+  }
+
+  query(sql: string) { this.assertOpen(); return runReadOnlyQuery(this.db, sql); }
+  explain(sql: string) { this.assertOpen(); return explainQuery(this.db, sql); }
+
+  /** Declared foreign keys between user tables (read from SQLite; native tables have none yet). */
+  relationships(): Relationship[] {
+    const result: Relationship[] = [];
+    for (const table of this.tables()) {
+      const groups = new Map<string, Relationship>();
+      for (const row of queryRows(this.db, `PRAGMA foreign_key_list(${quote(table)})`)) {
+        const key = String(row[0]);
+        const entry = groups.get(key) ?? { table, columns: [], referencedTable: String(row[2]), referencedColumns: [], onUpdate: String(row[5]), onDelete: String(row[6]) };
+        entry.columns.push(String(row[3])); entry.referencedColumns.push(row[4] === null ? '(primary key)' : String(row[4]));
+        groups.set(key, entry);
+      }
+      result.push(...groups.values());
+    }
+    return result;
+  }
+
   exportCopy(): Uint8Array {
     this.assertOpen();
     // sql.js export reopens its connection and resets pragmas.
@@ -106,6 +149,8 @@ export class DatabaseSession {
   fields(table: string): Field[] { return this.writable().fields(table); }
   canEditTable(table: string): boolean { try { this.fields(table); return true; } catch { return false; } }
   createTable(name: string, fields: Field[]): void { this.writable().createTable(name, fields); }
+  alterTable(table: string, changes: FieldChange[]): void { this.writable().alterTable(table, changes); }
+  importTable(name: string, fields: Field[], records: (string | null)[][]): number { return this.writable().importTable(name, fields, records); }
   insertRecord(table: string, values: RecordValues): string { return this.writable().insert(table, values); }
   updateRecord(table: string, id: string, values: RecordValues): void { this.writable().update(table, id, values); }
   deleteRecord(table: string, id: string): void { this.writable().delete(table, id); }

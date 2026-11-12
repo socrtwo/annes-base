@@ -1,7 +1,10 @@
 import type { SqlJsStatic } from 'sql.js';
 import type { CommandRegistry } from '../commands/registry';
 import { DatabaseSession, MAX_DATABASE_BYTES, PAGE_SIZE, type Cell } from '../engine/database';
-import { recordEditor, tableEditor } from './editors';
+import { designEditor, recordEditor, tableEditor } from './editors';
+import { mountSqlView } from './sqlView';
+import { mountImportPanel, showRelationships } from './importPanel';
+import { toDelimited, toHtml, toJson, toXml } from '../engine/exchange';
 import { IndexedDbRecoveryStore, type RecoveryMetadata, type RecoveryStore } from '../storage/recovery';
 import { DocumentAutosave } from '../storage/autosave';
 import { tableControls } from './tableControls';
@@ -17,7 +20,7 @@ import type { TableTotals, TotalChoice } from '../engine/totals';
 
 export interface DatabaseDependencies {
   load: () => Promise<SqlJsStatic>;
-  download: (bytes: Uint8Array, name: string) => void;
+  download: (bytes: Uint8Array, name: string, type?: string) => void;
   confirmDiscard?: () => boolean;
   recovery?: RecoveryStore;
   snapshots?: SnapshotStore;
@@ -30,8 +33,8 @@ const defaultDependencies: DatabaseDependencies = {
   savedViews: new IndexedDbSavedViewStore(),
   snapshotPreferences: { getItem: key => window.localStorage.getItem(key), setItem: (key, value) => window.localStorage.setItem(key, value) },
   load: async () => (await import('../engine/browser')).loadSqlite(),
-  download: (bytes, name) => {
-    const url = URL.createObjectURL(new Blob([Uint8Array.from(bytes).buffer], { type: 'application/vnd.sqlite3' }));
+  download: (bytes, name, type = 'application/vnd.sqlite3') => {
+    const url = URL.createObjectURL(new Blob([Uint8Array.from(bytes).buffer], { type }));
     const link = document.createElement('a');
     link.href = url;
     link.download = name;
@@ -115,6 +118,10 @@ export function mountDatabasePane(
   const recordHistory = node('section'); recordHistory.className = 'record-history'; recordHistory.hidden = true;
   recordHistory.setAttribute('aria-label', 'Record history');
   const closeHistory = () => { recordHistory.hidden = true; recordHistory.replaceChildren(); };
+  const sqlPanel = node('section');
+  const importHost = node('section');
+  const relationshipsHost = node('section'); relationshipsHost.hidden = true;
+  const closeRelationships = () => { relationshipsHost.hidden = true; relationshipsHost.replaceChildren(); };
   const recovery = node('section'); recovery.className = 'browser-recovery';
   recovery.setAttribute('aria-label', 'Browser recovery copies'); recovery.hidden = !recoveryStore;
   const recoveryHeading = node('h3', 'Browser recovery copies'); recoveryHeading.tabIndex = -1;
@@ -227,6 +234,46 @@ export function mountDatabasePane(
     showWorkspace();
     tableEditor(editing, (name, fields) => apply(() => { session!.createTable(name, fields); selected = name; offset = 0; resetView(); }), cancelEditing);
   }
+  function designTable() {
+    if (!session || !selected || !session.canEditTable(selected) || busy) return;
+    if (draftChanged && !confirmDiscard()) return;
+    draftChanged = false;
+    showWorkspace();
+    const table = selected;
+    designEditor(editing, table, session.fields(table), changes => apply(() => { session!.alterTable(table, changes); offset = 0; resetView(); }), cancelEditing);
+  }
+  const fileBase = () => (session?.name ?? 'Database').replace(/\.[^.]+$/, '').replace(/[\\/:*?"<>|\x00-\x1f]/g, '_') || 'Database';
+  const EXPORTS = {
+    csv: { label: 'CSV (comma-separated)', extension: 'csv', type: 'text/csv', write: (data: Parameters<typeof toDelimited>[0]) => toDelimited(data) },
+    tsv: { label: 'Tab-delimited text', extension: 'txt', type: 'text/tab-separated-values', write: (data: Parameters<typeof toDelimited>[0]) => toDelimited(data, '\t') },
+    json: { label: 'JSON', extension: 'json', type: 'application/json', write: toJson },
+    html: { label: 'HTML table', extension: 'html', type: 'text/html', write: toHtml },
+    xml: { label: 'XML', extension: 'xml', type: 'application/xml', write: toXml },
+  } as const;
+  type ExportFormat = keyof typeof EXPORTS | 'sql';
+  function exportData(format: ExportFormat) {
+    if (!session || busy) return;
+    showWorkspace();
+    try {
+      if (format === 'sql') {
+        dependencies.download(new TextEncoder().encode(session.sqlScript()), `${fileBase()}.sql`, 'application/sql');
+        message.textContent = 'SQL script download started. It recreates every user table, index, view and trigger with its rows in any SQLite database.';
+        return;
+      }
+      if (!selected) { message.textContent = 'Choose a table to export.'; return; }
+      const choice = EXPORTS[format];
+      const data = session.exportData(selected, effectiveView());
+      const safeTable = selected.replace(/[\\/:*?"<>|\x00-\x1f]/g, '_') || 'Table';
+      dependencies.download(new TextEncoder().encode(choice.write(data)), `${safeTable}.${choice.extension}`, choice.type);
+      message.textContent = `Exported ${data.rows.length.toLocaleString('en-US')} records from ${selected} as ${choice.label}. The current sort, filter and Find apply; the database was not changed.`;
+    } catch (error) { message.textContent = `Export failed: ${error instanceof Error ? error.message : String(error)}`; }
+  }
+  function openRelationships() {
+    if (!session || busy) return;
+    showWorkspace();
+    try { showRelationships(relationshipsHost, session.tables(), session.relationships(), session.editable, closeRelationships); }
+    catch (error) { message.textContent = `Cannot read relationships: ${error instanceof Error ? error.message : String(error)}`; }
+  }
   function editRecord(insert = false) {
     if (!session || !selected || !session.canEditTable(selected) || busy || !insert && !selectedRecord) return;
     if (draftChanged && !confirmDiscard()) return;
@@ -238,8 +285,9 @@ export function mountDatabasePane(
     }), cancelEditing);
   }
 
-  const display = (value: Cell): string => {
+  const display = (value: Cell, type = ''): string => {
     if (value === null) return 'NULL';
+    if (type.toUpperCase() === 'BOOLEAN' && (value === 0n || value === 1n)) return value === 1n ? 'Yes' : 'No';
     if (value instanceof Uint8Array) return `BLOB · ${value.byteLength} bytes`;
     const text = String(value);
     return text.length > 2000 ? text.slice(0, 2000) + '… [display shortened]' : text;
@@ -285,6 +333,7 @@ export function mountDatabasePane(
       }
       head.append(header);
       const body = node('tbody');
+      const types = session.columns(selected).map(column => column.type);
       for (const row of page.rows) {
         const tr = node('tr');
         if (editable) {
@@ -293,8 +342,8 @@ export function mountDatabasePane(
           radio.addEventListener('change', () => { selectedRecord = id; syncActions(); changed(session?.name, busy); });
           td.append(radio); tr.append(td);
         }
-        for (const value of row) {
-          const td = node('td', display(value));
+        for (const [index, value] of row.entries()) {
+          const td = node('td', display(value, types[index]));
           if (value === null) td.className = 'null-cell';
           tr.append(td);
         }
@@ -350,6 +399,7 @@ export function mountDatabasePane(
     for (const control of [newButton, sampleButton, openButton]) control.disabled = busy;
     exportButton.disabled = busy || !session;
     closeButton.disabled = busy || !session;
+    sqlView.contextChanged();
     syncActions();
     history.replaceChildren(node('summary', 'Change history'));
     const entries = session?.history() ?? [];
@@ -386,6 +436,11 @@ export function mountDatabasePane(
     undoButton.disabled = busy || !session?.canUndo();
     historyButton.disabled = busy || !canEdit;
     totalsButton.disabled = busy || !session || !selected; totalsButton.setAttribute('aria-pressed', String(totalsEnabled));
+    designButton.disabled = busy || !canEdit;
+    sqlButton.disabled = relationshipsButton.disabled = busy || !session;
+    importButton.disabled = busy || !session?.editable;
+    exportFormat.disabled = busy || !session;
+    exportRun.disabled = busy || !session || exportFormat.value !== 'sql' && !selected;
   }
 
   async function replace(create: () => Promise<DatabaseSession>, recovered?: () => RecoveryMetadata | undefined) {
@@ -401,7 +456,7 @@ export function mountDatabasePane(
       const tables = candidate.tables();
       session?.close();
       session = candidate;
-      cancelEditing(); closeHistory(); selectedRecord = undefined;
+      cancelEditing(); closeHistory(); closeRelationships(); selectedRecord = undefined;
       candidate = undefined;
       selected = tables[0];
       offset = 0;
@@ -432,7 +487,7 @@ export function mountDatabasePane(
     if (busy || !discard()) return;
     showWorkspace();
     session?.close(); session = undefined; autosave = undefined; snapshotDocumentId = undefined; selected = undefined; offset = 0; resetView();
-    cancelEditing(); closeHistory(); selectedRecord = undefined;
+    cancelEditing(); closeHistory(); closeRelationships(); selectedRecord = undefined;
     message.textContent = 'Database closed. Original files were not changed.';
     render();
   }
@@ -458,6 +513,22 @@ export function mountDatabasePane(
   const totalsButton = button('Totals row', () => {
     if (!session || !selected || busy) return;
     showWorkspace(); totalsEnabled = !totalsEnabled; renderTable(); syncActions(); changed(session.name, busy);
+  });
+  const designButton = button('Design table', () => report(designTable));
+  const sqlButton = button('SQL view', () => { if (session && !busy) { showWorkspace(); sqlView.show(); } });
+  const importButton = button('Import data', () => { if (session?.editable && !busy) { showWorkspace(); importPanel.show(); } });
+  const relationshipsButton = button('Relationships', openRelationships);
+  const exportFormat = node('select'); exportFormat.setAttribute('aria-label', 'Export format');
+  for (const [value, choice] of Object.entries(EXPORTS)) { const option = node('option', `Table as ${choice.label}`); option.value = value; exportFormat.append(option); }
+  { const option = node('option', 'Whole database as SQL script'); option.value = 'sql'; exportFormat.append(option); }
+  exportFormat.addEventListener('change', syncActions);
+  actions.append(exportFormat);
+  const exportRun = button('Export', () => exportData(exportFormat.value as ExportFormat));
+  const sqlView = mountSqlView(sqlPanel, () => ({ session, table: selected, busy }), dependencies.download);
+  const importPanel = mountImportPanel(importHost, () => !!session?.editable && !busy, (name, fields, records) => {
+    let count = 0;
+    apply(() => { count = session!.importTable(name, fields, records); selected = name; offset = 0; resetView(); });
+    message.textContent = `Imported ${count.toLocaleString('en-US')} records into ${name}. Undo removes the whole import.`;
   });
   if (dependencies.snapshots) {
     snapshots = mountSnapshots(snapshotPanel, dependencies.snapshots, dependencies.snapshotPreferences,
@@ -500,10 +571,33 @@ export function mountDatabasePane(
     ['edit.find', () => { showWorkspace(); tools.querySelector<HTMLInputElement>('input[type=search]')?.focus(); }, () => !!session && !!selected && !busy],
     ['record.totals', () => totalsButton.click(), () => !!session && !!selected && !busy],
     ['record.history', () => report(() => openRecordHistory()), () => !!session && !!selected && session.canEditTable(selected) && !busy],
+    ['create.tableDesign', createTable, () => !!session?.editable && !busy],
+    ['view.design', () => report(designTable), () => !!session && !!selected && session.canEditTable(selected) && !busy],
+    ['table.addField', () => report(designTable), () => !!session && !!selected && session.canEditTable(selected) && !busy],
+    ['table.renameField', () => report(designTable), () => !!session && !!selected && session.canEditTable(selected) && !busy],
+    ['view.datasheet', () => { if (session && selected && (!draftChanged || confirmDiscard())) { cancelEditing(); showWorkspace(); data.scrollIntoView?.({ block: 'start' }); } }, () => !!session && !!selected && !busy],
+    ['view.sql', () => sqlButton.click(), () => !!session && !busy],
+    ['create.sqlQuery', () => sqlButton.click(), () => !!session && !busy],
+    ['query.sqlEditor', () => sqlButton.click(), () => !!session && !busy],
+    ['query.run', () => sqlView.run(), () => !!session && !busy && sqlView.open],
+    ['query.explain', () => sqlView.explain(), () => !!session && !busy && sqlView.open],
+    ['query.formatSql', () => sqlView.format(), () => sqlView.open],
+    ['query.history', () => { showWorkspace(); sqlView.show(true); }, () => !!session && !busy && sqlView.historyCount > 0],
+    ['ext.importText', () => importButton.click(), () => !!session?.editable && !busy],
+    ['ext.importJson', () => importButton.click(), () => !!session?.editable && !busy],
+    ['ext.exportText', () => exportData('csv'), () => !!session && !!selected && !busy],
+    ['ext.exportJson', () => exportData('json'), () => !!session && !!selected && !busy],
+    ['ext.exportHtml', () => exportData('html'), () => !!session && !!selected && !busy],
+    ['ext.exportXml', () => exportData('xml'), () => !!session && !!selected && !busy],
+    ['ext.exportSql', () => exportData('sql'), () => !!session && !busy],
+    ['file.exportSqlScript', () => exportData('sql'), () => !!session && !busy],
+    ['ext.exportSqlite', download, () => !!session && !busy],
+    ['dbtools.relationships', openRelationships, () => !!session && !busy],
+    ['table.relationships', openRelationships, () => !!session && !busy],
   ] as const) registry.bind(id, handler, enabled);
   if (recoveryStore) registry.bind('file.openRecent', () => { showWorkspace(); recovery.scrollIntoView?.({ block: 'start' }); recoveryHeading.focus(); }, () => recoveryEntries.length > 0 && !busy);
   grid.append(navigation, data);
-  pane.append(title, message, actions, input, recovery, snapshotPanel, editing, recordHistory, tools, savedViewsPanel, grid, history, note);
+  pane.append(title, message, actions, input, recovery, snapshotPanel, importHost, relationshipsHost, editing, recordHistory, sqlPanel, tools, savedViewsPanel, grid, history, note);
   container.append(pane);
   render();
   void refreshRecovery();
